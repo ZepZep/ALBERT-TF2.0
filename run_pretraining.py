@@ -185,7 +185,10 @@ def run_customized_training(strategy,
         exclude_from_weight_decay=['layer_norm', 'bias']) 
     pretrain_model.optimizer = optimizer
 
-
+  callbacks = tf.keras.callbacks.TensorBoard(
+    log_dir=model_dir,
+    update_freq=10)
+  
   trained_model = run_customized_training_loop(
       strategy=strategy,
       model=pretrain_model,
@@ -196,7 +199,8 @@ def run_customized_training(strategy,
       train_input_fn=train_input_fn,
       steps_per_epoch=steps_per_epoch,
       steps_per_loop=steps_per_loop,
-      epochs=epochs)
+      epochs=epochs,
+      custom_callbacks=callbacks)
 
   # Creates the BERT core model outside distribution strategy scope.
   _, core_model = albert_model.pretrain_model(albert_config, max_seq_length,
@@ -226,12 +230,14 @@ def run_bert_pretrain(strategy,input_meta_data):
   logging.info('Training using customized training loop TF 2.0 with distrubuted'
                'strategy.')
 
+  save_checkpoints_steps = 1024
   num_train_steps = None
   num_warmup_steps = None
   steps_per_epoch = None
   if FLAGS.do_train:
     len_train_examples = input_meta_data['train_data_size']
-    steps_per_epoch = int(len_train_examples / FLAGS.train_batch_size)
+    steps_per_epoch = int(save_checkpoints_steps / FLAGS.train_batch_size)
+    #int(len_train_examples / FLAGS.train_batch_size)
     num_train_steps = int(
         len_train_examples / FLAGS.train_batch_size * FLAGS.num_train_epochs)
     num_warmup_steps = int(num_train_steps * FLAGS.warmup_proportion)
