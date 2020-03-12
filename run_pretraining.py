@@ -76,6 +76,10 @@ flags.DEFINE_integer("train_batch_size", 128, "Total batch size for training.")
 
 flags.DEFINE_integer("eval_batch_size", 64, "Total batch size for eval.")
 
+flags.DEFINE_integer("save_steps", 1000, "Number of steps after which checkpoint is created.")
+
+flags.DEFINE_integer("loop_steps", 100, "Number of steps after which summary is reported")
+
 flags.DEFINE_enum("optimizer", "lamb", ["adamw", "lamb"],
                   "The optimizer for training.")
 
@@ -185,10 +189,12 @@ def run_customized_training(strategy,
         exclude_from_weight_decay=['layer_norm', 'bias']) 
     pretrain_model.optimizer = optimizer
 
-  callbacks = tf.keras.callbacks.TensorBoard(
-    log_dir=model_dir,
-    update_freq=10)
-  
+  tbcb = tf.keras.callbacks.LambdaCallback(
+    on_epoch_begin=lambda x: print("epoch beg"), on_epoch_end=lambda x: print("epoch end"),
+    on_batch_begin=lambda x: print("batch beg"), on_batch_end=lambda x: print("batch end"),
+    on_train_begin=lambda x: print("train beg"), on_train_end=lambda x: print("train end")
+  )
+
   trained_model = run_customized_training_loop(
       strategy=strategy,
       model=pretrain_model,
@@ -200,7 +206,8 @@ def run_customized_training(strategy,
       steps_per_epoch=steps_per_epoch,
       steps_per_loop=steps_per_loop,
       epochs=epochs,
-      custom_callbacks=callbacks)
+      custom_callbacks=[])
+
 
   # Creates the BERT core model outside distribution strategy scope.
   _, core_model = albert_model.pretrain_model(albert_config, max_seq_length,
@@ -230,14 +237,17 @@ def run_bert_pretrain(strategy,input_meta_data):
   logging.info('Training using customized training loop TF 2.0 with distrubuted'
                'strategy.')
 
-  save_checkpoints_steps = 1024
+
   num_train_steps = None
   num_warmup_steps = None
   steps_per_epoch = None
+  num_epochs=FLAGS.num_train_epochs
+  
   if FLAGS.do_train:
     len_train_examples = input_meta_data['train_data_size']
-    steps_per_epoch = int(save_checkpoints_steps / FLAGS.train_batch_size)
-    #int(len_train_examples / FLAGS.train_batch_size)
+    steps_per_epoch = int(min(len_train_examples / FLAGS.train_batch_size,
+                              FLAGS.save_steps))
+    num_epochs = len_train_examples * FLAGS.num_train_epochs // (steps_per_epoch * FLAGS.train_batch_size)
     num_train_steps = int(
         len_train_examples / FLAGS.train_batch_size * FLAGS.num_train_epochs)
     num_warmup_steps = int(num_train_steps * FLAGS.warmup_proportion)
@@ -249,8 +259,8 @@ def run_bert_pretrain(strategy,input_meta_data):
       input_meta_data["max_predictions_per_seq"],
       FLAGS.output_dir,
       steps_per_epoch,
-      steps_per_epoch,
-      FLAGS.num_train_epochs,
+      FLAGS.loop_steps,
+      num_epochs,
       FLAGS.learning_rate,
       num_warmup_steps,
       FLAGS.input_files,

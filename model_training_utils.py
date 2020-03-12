@@ -26,11 +26,10 @@ _SUMMARY_TXT = 'training_summary.txt'
 _MIN_SUMMARY_STEPS = 10
 
 
-def _save_checkpoint(checkpoint, model_dir, checkpoint_prefix):
-  """Saves model to with provided checkpoint prefix."""
+def _save_checkpoint(checkpoint, manager, checkpoint_number):
+  """Saves model to with provided checkpoint number."""
 
-  checkpoint_path = os.path.join(model_dir, checkpoint_prefix)
-  saved_path = checkpoint.save(checkpoint_path)
+  saved_path = manager.save(checkpoint_number)
   logging.info('Saving model as TF checkpoint: %s', saved_path)
   return
 
@@ -296,7 +295,8 @@ def run_customized_training_loop(
 
     # Training loop starts here.
     checkpoint = tf.train.Checkpoint(model=model, optimizer=optimizer)
-    latest_checkpoint_file = tf.train.latest_checkpoint(model_dir)
+    manager = tf.train.CheckpointManager(checkpoint, directory=model_dir, max_to_keep=5, checkpoint_name="mymodel")
+    latest_checkpoint_file = manager.latest_checkpoint
     if latest_checkpoint_file:
       logging.info(
           'Checkpoint file %s found and restoring from '
@@ -317,6 +317,7 @@ def run_customized_training_loop(
       _run_callbacks_on_batch_begin(current_step)
       # Runs several steps in the host while loop.
       steps = steps_to_run(current_step, steps_per_epoch, steps_per_loop)
+      #print("running", steps, "steps")
 
       if steps == 1:
         # TODO(zongweiz): merge with train_steps once tf.while_loop
@@ -331,7 +332,7 @@ def run_customized_training_loop(
 
       train_loss = _float_metric_value(train_loss_metric)
       # Updates training logging.
-      training_status = 'Train Step: %d/%d  / loss = %s' % (
+      training_status = 'Train Step:%d/%d | loss = %s' % (
           current_step, total_training_steps, train_loss)
 
       if train_summary_writer:
@@ -340,7 +341,7 @@ def run_customized_training_loop(
               train_loss_metric.name, train_loss, step=current_step)
           for metric in train_metrics + model.metrics:
             metric_value = _float_metric_value(metric)
-            training_status += '  %s = %f' % (metric.name, metric_value)
+            training_status += ' %s=%.3f' % (metric.name, metric_value)
             tf.summary.scalar(metric.name, metric_value, step=current_step)
           train_summary_writer.flush()
       logging.info(training_status)
@@ -350,8 +351,7 @@ def run_customized_training_loop(
         # To avoid repeated model saving, we do not save after the last
         # step of training.
         if current_step < total_training_steps:
-          _save_checkpoint(checkpoint, model_dir,
-                           checkpoint_name.format(step=current_step))
+          _save_checkpoint(checkpoint, manager, current_step)
 
         if eval_input_fn:
           logging.info('Running evaluation after step: %s.', current_step)
@@ -361,8 +361,7 @@ def run_customized_training_loop(
           for metric in eval_metrics + model.metrics:
             metric.reset_states()
 
-    _save_checkpoint(checkpoint, model_dir,
-                     checkpoint_name.format(step=current_step))
+    _save_checkpoint(checkpoint, manager, current_step)
 
     if eval_input_fn:
       logging.info('Running final evaluation after training is complete.')
